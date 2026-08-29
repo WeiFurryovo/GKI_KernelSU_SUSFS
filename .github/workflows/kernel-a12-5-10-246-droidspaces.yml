@@ -1,0 +1,66 @@
+name: 构建 Droidspaces 内核 - Android 12 (5.10.246)
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  actions: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      droidspaces_slot:
+        description: "Droidspaces kABI 槽位（优先使用 678）"
+        required: true
+        type: choice
+        options:
+          - "678"
+          - "123"
+          - "345"
+        default: "678"
+      droidspaces_ntsync:
+        description: "启用 NTSync 支持"
+        required: true
+        type: boolean
+        default: true
+      artifact_upload_mode:
+        description: "构建产物上传模式"
+        required: true
+        type: choice
+        options:
+          - "仅上传 AnyKernel3.zip"
+          - "上传全部"
+        default: "仅上传 AnyKernel3.zip"
+
+jobs:
+  build-kernel:
+    name: "5.10.246-Droidspaces-ReSukiSU"
+    uses: ./.github/workflows/build.yml
+    secrets: inherit
+    with:
+      android_version: "android12"
+      kernel_version: "5.10"
+      sub_level: "246"
+      os_patch_level: "2025-12"
+      revision: "r1"
+      ksu_variant: "ReSukiSU"
+      version: ""
+      build_time: "Sun Dec 01 08:10:00 UTC 2024"
+      use_zram: false
+      use_bbg: false
+      use_kpm: "disabled (关闭)"
+      use_rekernel: false
+      cve_2026_43499_patch: false
+      supp_op: false
+      enable_susfs: false
+      droidspaces: ${{ inputs.droidspaces_slot }}
+      droidspaces_ntsync: ${{ inputs.droidspaces_ntsync }}
+      artifact_upload_mode: ${{ inputs.artifact_upload_mode }}
+
+  get-ksu-manager:
+    uses: ./.github/workflows/get-manager.yml
+    secrets: inherit
+    with:
+      kernelsu_variant: "ReSukiSU"

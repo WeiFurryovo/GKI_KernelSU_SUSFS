@@ -584,6 +584,29 @@ jobs:
         if: inputs.droidspaces != 'off'
         working-directory: ${{ env.KERNEL_ROOT }}/common
         run: |
+          set -euo pipefail
+
+          apply_required_patch() {
+            local patch_file="$1"
+            local patch_name="$2"
+
+            if [ ! -s "$patch_file" ]; then
+              echo "::error title=Droidspaces 补丁缺失::未找到 $patch_name 补丁: $patch_file"
+              exit 1
+            fi
+
+            if patch -p1 --batch --forward --dry-run < "$patch_file" >/dev/null 2>&1; then
+              patch -p1 --batch --forward < "$patch_file"
+              echo "$patch_name 补丁应用完成"
+            elif patch -p1 --batch --reverse --dry-run < "$patch_file" >/dev/null 2>&1; then
+              echo "$patch_name 补丁已存在，跳过重复应用"
+            else
+              echo "::error title=Droidspaces 补丁冲突::$patch_name 补丁无法应用，停止构建以避免生成不可启动的内核"
+              patch -p1 --batch --forward --dry-run < "$patch_file" || true
+              exit 1
+            fi
+          }
+
           KERNEL_VER="${{ inputs.kernel_version }}"
           SLOT="${{ inputs.droidspaces }}"
 
@@ -602,17 +625,13 @@ jobs:
               exit 0
               ;;
           esac
-          if ! patch -p1 --forward < "$PATCH_FILE"; then
-            echo "::warning::SYSVIPC kABI 补丁应用失败，可能已应用或上下文不匹配"
-          fi
+          apply_required_patch "$PATCH_FILE" "SYSVIPC kABI"
 
           # 5.10 及以下还需要 POSIX_MQUEUE 的 kABI 修复
           if [ "$KERNEL_VER" = "5.10" ]; then
             echo "应用 Droidspaces POSIX_MQUEUE kABI 修复补丁 (5.10)..."
             POSIX_PATCH="$DROIDSPACES_PATCHES/below-kernel-6.12/002.5.10_or_lower_use_android_abi_padding_for_posix_mqueue.patch"
-            if ! patch -p1 --forward < "$POSIX_PATCH"; then
-              echo "::warning::POSIX_MQUEUE kABI 补丁应用失败，可能已应用或上下文不匹配"
-            fi
+            apply_required_patch "$POSIX_PATCH" "POSIX_MQUEUE kABI"
           fi
 
           # Android 16 / 6.12 的 rust_binder.ko 在启用 IPC_NS 后会引用
