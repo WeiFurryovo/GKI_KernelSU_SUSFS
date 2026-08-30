@@ -1319,7 +1319,6 @@ jobs:
             CONFIG_IPC_NS
             CONFIG_PID_NS
             CONFIG_DEVTMPFS
-            CONFIG_NTSYNC
             CONFIG_KSU
             CONFIG_LTO_CLANG_FULL
           )
@@ -1330,6 +1329,12 @@ jobs:
               exit 1
             fi
           done
+
+          if [[ "${{ inputs.droidspaces_ntsync }}" == "true" ]] \
+            && ! grep -q '^CONFIG_NTSYNC=y$' "$FINAL_CONFIG"; then
+            echo "::error title=zeus 配置校验失败::已请求 NTSync，但 CONFIG_NTSYNC 未启用"
+            exit 1
+          fi
 
           for cfg in CONFIG_DEBUG_FS CONFIG_TRIM_UNUSED_KSYMS; do
             if ! grep -q "^# ${cfg} is not set$" "$FINAL_CONFIG"; then
