@@ -70,6 +70,14 @@ on:
         required: false
         type: string
         default: "1"
+      scmversion_override:
+        required: false
+        type: string
+        default: ""
+      expected_kernel_release:
+        required: false
+        type: string
+        default: ""
       job_timeout_minutes:
         required: false
         type: number
@@ -155,6 +163,8 @@ jobs:
           echo "目标产品      : ${{ inputs.target_product || '通用 GKI' }}"
           echo "Legacy LTO    : ${{ inputs.legacy_lto_mode }}"
           echo "裁剪 KMI 符号 : ${{ inputs.trim_nonlisted_kmi }}"
+          echo "SCM 版本覆盖  : ${{ inputs.scmversion_override || '无' }}"
+          echo "预期内核 release: ${{ inputs.expected_kernel_release || '不校验' }}"
           echo "作业时限（分）: ${{ inputs.job_timeout_minutes }}"
           echo "编译时限（分）: ${{ inputs.compile_timeout_minutes }}"
           echo "交换空间（GiB）: ${{ inputs.swap_size_gb }}"
@@ -1174,6 +1184,8 @@ jobs:
 
       - name: 配置内核名称
         working-directory: ${{ env.KERNEL_ROOT }}
+        env:
+          SCMVERSION_OVERRIDE: ${{ inputs.scmversion_override }}
         run: |
           if [ -f "build/build.sh" ]; then
             sed -i 's/-dirty//' ./common/scripts/setlocalversion
@@ -1182,6 +1194,15 @@ jobs:
             sed -i '/kmi_symbol_list_strict_mode/d' ./common/BUILD.bazel
             rm -rf ./common/android/abi_gki_protected_exports_*
             sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" ./build/kernel/kleaf/impl/stamp.bzl
+          fi
+
+          if [[ -n "$SCMVERSION_OVERRIDE" ]]; then
+            if [[ ! "$SCMVERSION_OVERRIDE" =~ ^-[0-9A-Za-z][0-9A-Za-z._+-]*$ ]]; then
+              echo "::error title=SCM 版本覆盖无效::值必须以连字符开头，且只能包含字母、数字、点、下划线、加号和连字符"
+              exit 1
+            fi
+            printf '%s\n' "$SCMVERSION_OVERRIDE" > ./common/.scmversion
+            echo "已固定源码 SCM 版本: $SCMVERSION_OVERRIDE"
           fi
 
           VERSION_INPUT=$(echo "${{ inputs.version }}" | tr -d '[:space:]')
@@ -1333,6 +1354,8 @@ jobs:
 
       - name: 验证 zeus 最终内核配置
         if: inputs.target_product == 'zeus'
+        env:
+          EXPECTED_KERNEL_RELEASE: ${{ inputs.expected_kernel_release }}
         run: |
           set -euo pipefail
 
@@ -1381,6 +1404,20 @@ jobs:
           if ! grep -q '^CONFIG_CC_VERSION_TEXT=.*r563880c' "$FINAL_CONFIG"; then
             echo "::error title=zeus 编译器校验失败::最终配置不是由 clang-r563880c 生成"
             exit 1
+          fi
+
+          if [[ -n "$EXPECTED_KERNEL_RELEASE" ]]; then
+            RELEASE_FILE="$(dirname "$FINAL_CONFIG")/include/config/kernel.release"
+            if [[ ! -s "$RELEASE_FILE" ]]; then
+              echo "::error title=内核 release 校验失败::未找到 $RELEASE_FILE"
+              exit 1
+            fi
+            read -r ACTUAL_KERNEL_RELEASE < "$RELEASE_FILE"
+            if [[ "$ACTUAL_KERNEL_RELEASE" != "$EXPECTED_KERNEL_RELEASE" ]]; then
+              echo "::error title=内核 release 不匹配::期望 $EXPECTED_KERNEL_RELEASE，实际 $ACTUAL_KERNEL_RELEASE"
+              exit 1
+            fi
+            echo "内核 release 校验通过: $ACTUAL_KERNEL_RELEASE"
           fi
 
           echo "zeus 最终配置校验通过"
@@ -1524,11 +1561,25 @@ jobs:
 
       - name: 收集补丁冲突文件
         if: always()
+        env:
+          TARGET_PRODUCT: ${{ inputs.target_product }}
         run: |
           REJECTS_DIR="$GITHUB_WORKSPACE/patch-rejects"
           mkdir -p "$REJECTS_DIR"
 
-          mapfile -t REJS < <(find "$KERNEL_ROOT" -type f -name '*.rej')
+          mapfile -t FOUND_REJS < <(find "$KERNEL_ROOT" -type f -name '*.rej')
+          REJS=()
+          for REJ in "${FOUND_REJS[@]}"; do
+            if [[ "$REJ" == "$KERNEL_ROOT/common/"* ]]; then
+              REL_COMMON="${REJ#"$KERNEL_ROOT/common/"}"
+              if git -C "$KERNEL_ROOT/common" ls-files --error-unmatch -- "$REL_COMMON" >/dev/null 2>&1 \
+                && git -C "$KERNEL_ROOT/common" diff --quiet -- "$REL_COMMON"; then
+                echo "忽略源码仓库已跟踪且未修改的 .rej: $REL_COMMON"
+                continue
+              fi
+            fi
+            REJS+=("$REJ")
+          done
           REJ_COUNT=${#REJS[@]}
           echo "发现 $REJ_COUNT 个 .rej 文件"
           echo "REJ_COUNT=$REJ_COUNT" >> $GITHUB_ENV
@@ -1546,6 +1597,11 @@ jobs:
               fi
               echo "$REL" >> "$REJECTS_DIR/index.txt"
             done
+          fi
+
+          if [[ "$TARGET_PRODUCT" == "zeus" && "$REJ_COUNT" -gt 0 ]]; then
+            echo "::error title=zeus 补丁冲突::发现 $REJ_COUNT 个新产生或被修改的 .rej，禁止上传刷入包"
+            exit 1
           fi
 
       - name: 上传 AnyKernel3 刷入包

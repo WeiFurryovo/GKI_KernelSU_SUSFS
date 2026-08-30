@@ -49,6 +49,9 @@ jobs:
       target_product: "zeus"
       legacy_lto_mode: "full"
       trim_nonlisted_kmi: "0"
+      # LineageOS 构建不附加 AOSP 的 android12-9 KMI 标签；保持与 stock vendor modules 相同的 vermagic。
+      scmversion_override: "-ge682ed2de56f"
+      expected_kernel_release: "5.10.256-gki-ge682ed2de56f"
       job_timeout_minutes: 120
       compile_timeout_minutes: 75
       swap_size_gb: 12
