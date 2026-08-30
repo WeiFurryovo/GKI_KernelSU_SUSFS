@@ -54,6 +54,14 @@ on:
         required: false
         type: string
         default: ""
+      kernel_config_fragments:
+        required: false
+        type: string
+        default: ""
+      target_product:
+        required: false
+        type: string
+        default: ""
       legacy_lto_mode:
         required: false
         type: string
@@ -127,6 +135,8 @@ jobs:
           echo "内核源码仓库  : ${{ inputs.kernel_source_repo || 'AOSP 默认' }}"
           echo "内核源码提交  : ${{ inputs.kernel_source_commit || '分支默认' }}"
           echo "Clang 版本    : ${{ inputs.clang_prebuilt_version || '内核清单默认' }}"
+          echo "配置片段      : ${{ inputs.kernel_config_fragments || '无' }}"
+          echo "目标产品      : ${{ inputs.target_product || '通用 GKI' }}"
           echo "Legacy LTO    : ${{ inputs.legacy_lto_mode }}"
           echo "SUSFS 状态    : ${{ inputs.enable_susfs }}"
           echo "ZRAM 增强     : ${{ inputs.use_zram }}"
@@ -400,6 +410,40 @@ jobs:
 
           echo "固定源码提交: $(git -C common rev-parse HEAD)"
           echo "固定源码版本: $(awk '/^(VERSION|PATCHLEVEL|SUBLEVEL) =/ { printf \"%s%s\", sep, $3; sep=\".\" } END { print \"\" }' common/Makefile)"
+
+      - name: 合并设备内核配置
+        if: inputs.kernel_config_fragments != ''
+        working-directory: ${{ env.KERNEL_ROOT }}/common
+        env:
+          CONFIG_FRAGMENTS: ${{ inputs.kernel_config_fragments }}
+        run: |
+          set -euo pipefail
+
+          BASE_CONFIG="arch/arm64/configs/gki_defconfig"
+          MERGED_CONFIG="$RUNNER_TEMP/merged-gki-defconfig"
+          read -r -a FRAGMENTS <<< "$CONFIG_FRAGMENTS"
+          FRAGMENT_PATHS=()
+
+          for fragment in "${FRAGMENTS[@]}"; do
+            if [[ "$fragment" = /* || "$fragment" == *".."* ]]; then
+              echo "::error title=配置片段路径无效::$fragment"
+              exit 1
+            fi
+            fragment_path="arch/arm64/configs/$fragment"
+            if [[ ! -s "$fragment_path" ]]; then
+              echo "::error title=配置片段缺失::$fragment_path"
+              exit 1
+            fi
+            FRAGMENT_PATHS+=("$fragment_path")
+          done
+
+          KCONFIG_CONFIG="$MERGED_CONFIG" scripts/kconfig/merge_config.sh -m -r \
+            "$BASE_CONFIG" "${FRAGMENT_PATHS[@]}"
+          cp "$MERGED_CONFIG" "$BASE_CONFIG"
+
+          echo "已合并设备配置: ${FRAGMENTS[*]}"
+          grep -E '^(CONFIG_ARCH_WAIPIO|CONFIG_BUILD_ARM64_DT_OVERLAY|CONFIG_MI_WIRELESS|CONFIG_MI_CHARGER_M81|CONFIG_DEBUG_FS)=' \
+            "$BASE_CONFIG" || true
 
       - name: 应用 Stock Config 伪装
         run: |
@@ -1213,7 +1257,7 @@ jobs:
               sed -i '/KMI_SYMBOL_LIST_STRICT_MODE/d' ./common/build.config.gki.aarch64
 
               if [ -f "build/build.sh" ]; then
-                LTO="${{ inputs.legacy_lto_mode }}" BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh CC="/usr/bin/ccache clang" || exit 1
+                TARGET_PRODUCT="${{ inputs.target_product }}" LTO="${{ inputs.legacy_lto_mode }}" BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh CC="/usr/bin/ccache clang" || exit 1
                 strings "out/${{ inputs.android_version }}-${{ inputs.kernel_version }}/dist/Image" | grep 'Linux version'
               else
                 # 提取 gki_defconfig 修改到 fragment，避免 bazel trim 检查失败

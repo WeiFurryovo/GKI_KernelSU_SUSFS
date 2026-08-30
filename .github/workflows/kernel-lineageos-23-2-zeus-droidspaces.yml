@@ -45,6 +45,8 @@ jobs:
       kernel_source_commit: "e682ed2de56fd2841ef35741c4d0f03599ffd561"
       clang_prebuilt_commit: "9916fb51ccb914d62d35ad9a7b9b21d2ef046928"
       clang_prebuilt_version: "clang-r563880c"
+      kernel_config_fragments: "vendor/waipio_GKI.config vendor/xiaomi_GKI.config vendor/zeus_GKI.config vendor/debugfs.config"
+      target_product: "zeus"
       legacy_lto_mode: "full"
       use_zram: false
       use_bbg: false
