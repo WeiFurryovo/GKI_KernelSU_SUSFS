@@ -25,15 +25,6 @@ on:
         required: true
         type: boolean
         default: true
-      artifact_upload_mode:
-        description: "构建产物上传模式"
-        required: true
-        type: choice
-        options:
-          - "仅上传 AnyKernel3.zip"
-          - "上传全部"
-        default: "仅上传 AnyKernel3.zip"
-
 jobs:
   build-kernel:
     name: "LineageOS-23.2-zeus-5.10.256-Droidspaces-ReSukiSU"
@@ -64,7 +55,8 @@ jobs:
       enable_susfs: false
       droidspaces: ${{ inputs.droidspaces_slot }}
       droidspaces_ntsync: ${{ inputs.droidspaces_ntsync }}
-      artifact_upload_mode: ${{ inputs.artifact_upload_mode }}
+      # zeus 的官方 boot 分区为 192 MiB，仅提供保留原 boot 结构的 AnyKernel3 产物。
+      artifact_upload_mode: "仅上传 AnyKernel3.zip"
 
   get-ksu-manager:
     uses: ./.github/workflows/get-manager.yml
