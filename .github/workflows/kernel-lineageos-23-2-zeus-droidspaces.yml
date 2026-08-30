@@ -49,6 +49,9 @@ jobs:
       target_product: "zeus"
       legacy_lto_mode: "full"
       trim_nonlisted_kmi: "0"
+      job_timeout_minutes: 120
+      compile_timeout_minutes: 75
+      swap_size_gb: 12
       use_zram: false
       use_bbg: false
       use_kpm: "disabled (关闭)"

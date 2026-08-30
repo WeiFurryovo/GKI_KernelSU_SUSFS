@@ -70,6 +70,18 @@ on:
         required: false
         type: string
         default: "1"
+      job_timeout_minutes:
+        required: false
+        type: number
+        default: 60
+      compile_timeout_minutes:
+        required: false
+        type: number
+        default: 30
+      swap_size_gb:
+        required: false
+        type: number
+        default: 0
 
       # ==================== 功能开关 ====================
       use_zram:
@@ -117,7 +129,7 @@ jobs:
   build-kernel:
     name: "${{ inputs.kernel_version }}.${{ inputs.sub_level }}-${{ inputs.android_version }}-${{ inputs.os_patch_level }}-${{ inputs.ksu_variant }}"
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: ${{ inputs.job_timeout_minutes }}
 
     env:
       CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
@@ -143,6 +155,9 @@ jobs:
           echo "目标产品      : ${{ inputs.target_product || '通用 GKI' }}"
           echo "Legacy LTO    : ${{ inputs.legacy_lto_mode }}"
           echo "裁剪 KMI 符号 : ${{ inputs.trim_nonlisted_kmi }}"
+          echo "作业时限（分）: ${{ inputs.job_timeout_minutes }}"
+          echo "编译时限（分）: ${{ inputs.compile_timeout_minutes }}"
+          echo "交换空间（GiB）: ${{ inputs.swap_size_gb }}"
           echo "SUSFS 状态    : ${{ inputs.enable_susfs }}"
           echo "ZRAM 增强     : ${{ inputs.use_zram }}"
           echo "BBG 补丁      : ${{ inputs.use_bbg }}"
@@ -169,6 +184,23 @@ jobs:
           rm_cmd: "rmz"
           rmz_version: "3.1.1"
           testing: false
+
+      - name: 配置构建交换空间
+        if: inputs.swap_size_gb > 0
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SWAP_FILE="$RUNNER_TEMP/kernel-build.swap"
+          sudo fallocate -l "${{ inputs.swap_size_gb }}G" "$SWAP_FILE"
+          sudo chmod 600 "$SWAP_FILE"
+          sudo mkswap "$SWAP_FILE"
+          sudo swapon "$SWAP_FILE"
+
+          echo "已启用 ${{ inputs.swap_size_gb }} GiB 构建交换空间"
+          free -h
+          swapon --show
+          df -h "$RUNNER_TEMP"
 
       - name: 检出代码仓库
         uses: actions/checkout@v7
@@ -1229,7 +1261,7 @@ jobs:
         uses: nick-fields/retry@v4
         with:
           shell: bash
-          timeout_minutes: 30
+          timeout_minutes: ${{ inputs.compile_timeout_minutes }}
           max_attempts: 3
           retry_on: timeout
           command: |
@@ -1254,6 +1286,9 @@ jobs:
               echo "开始时间: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
               echo "当前 KSU 最新提交日期: ${KSU_LATEST_COMMIT_DATE}"
               echo "当前 SUSFS 最新提交日期: ${SUSFS_LATEST_COMMIT_DATE}"
+              free -h
+              swapon --show
+              df -h "$KERNEL_ROOT"
               set -ex
               cd "$KERNEL_ROOT"
 
