@@ -66,6 +66,10 @@ on:
         required: false
         type: string
         default: "thin"
+      trim_nonlisted_kmi:
+        required: false
+        type: string
+        default: "1"
 
       # ==================== 功能开关 ====================
       use_zram:
@@ -138,6 +142,7 @@ jobs:
           echo "配置片段      : ${{ inputs.kernel_config_fragments || '无' }}"
           echo "目标产品      : ${{ inputs.target_product || '通用 GKI' }}"
           echo "Legacy LTO    : ${{ inputs.legacy_lto_mode }}"
+          echo "裁剪 KMI 符号 : ${{ inputs.trim_nonlisted_kmi }}"
           echo "SUSFS 状态    : ${{ inputs.enable_susfs }}"
           echo "ZRAM 增强     : ${{ inputs.use_zram }}"
           echo "BBG 补丁      : ${{ inputs.use_bbg }}"
@@ -1257,7 +1262,7 @@ jobs:
               sed -i '/KMI_SYMBOL_LIST_STRICT_MODE/d' ./common/build.config.gki.aarch64
 
               if [ -f "build/build.sh" ]; then
-                TARGET_PRODUCT="${{ inputs.target_product }}" LTO="${{ inputs.legacy_lto_mode }}" BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh CC="/usr/bin/ccache clang" || exit 1
+                TARGET_PRODUCT="${{ inputs.target_product }}" TRIM_NONLISTED_KMI="${{ inputs.trim_nonlisted_kmi }}" LTO="${{ inputs.legacy_lto_mode }}" BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh CC="/usr/bin/ccache clang" || exit 1
                 strings "out/${{ inputs.android_version }}-${{ inputs.kernel_version }}/dist/Image" | grep 'Linux version'
               else
                 # 提取 gki_defconfig 修改到 fragment，避免 bazel trim 检查失败
@@ -1290,6 +1295,55 @@ jobs:
               echo "退出码: $BUILD_STATUS"
             } >> "$LOG_FILE"
             exit "$BUILD_STATUS"
+
+      - name: 验证 zeus 最终内核配置
+        if: inputs.target_product == 'zeus'
+        run: |
+          set -euo pipefail
+
+          FINAL_CONFIG="$KERNEL_ROOT/out/${{ inputs.android_version }}-${{ inputs.kernel_version }}/common/.config"
+          if [[ ! -s "$FINAL_CONFIG" ]]; then
+            echo "::error title=最终配置缺失::未找到 $FINAL_CONFIG"
+            exit 1
+          fi
+
+          REQUIRED_CONFIGS=(
+            CONFIG_ARCH_WAIPIO
+            CONFIG_BUILD_ARM64_DT_OVERLAY
+            CONFIG_MI_WIRELESS
+            CONFIG_BQ_FUEL_GAUGE
+            CONFIG_MI_CHARGER_M81
+            CONFIG_MI_THERMAL_MULTI_CHARGE
+            CONFIG_SYSVIPC
+            CONFIG_POSIX_MQUEUE
+            CONFIG_IPC_NS
+            CONFIG_PID_NS
+            CONFIG_DEVTMPFS
+            CONFIG_NTSYNC
+            CONFIG_KSU
+            CONFIG_LTO_CLANG_FULL
+          )
+
+          for cfg in "${REQUIRED_CONFIGS[@]}"; do
+            if ! grep -q "^${cfg}=y$" "$FINAL_CONFIG"; then
+              echo "::error title=zeus 配置校验失败::${cfg} 未启用"
+              exit 1
+            fi
+          done
+
+          for cfg in CONFIG_DEBUG_FS CONFIG_TRIM_UNUSED_KSYMS; do
+            if ! grep -q "^# ${cfg} is not set$" "$FINAL_CONFIG"; then
+              echo "::error title=zeus 配置校验失败::${cfg} 未保持关闭"
+              exit 1
+            fi
+          done
+
+          if ! grep -q '^CONFIG_CC_VERSION_TEXT=.*r563880c' "$FINAL_CONFIG"; then
+            echo "::error title=zeus 编译器校验失败::最终配置不是由 clang-r563880c 生成"
+            exit 1
+          fi
+
+          echo "zeus 最终配置校验通过"
 
       - name: 整理编译失败日志
         if: ${{ always() && steps.compile_kernel.outcome == 'failure' }}

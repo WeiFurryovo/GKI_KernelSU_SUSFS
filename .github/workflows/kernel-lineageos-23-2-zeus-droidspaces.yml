@@ -48,6 +48,7 @@ jobs:
       kernel_config_fragments: "vendor/waipio_GKI.config vendor/xiaomi_GKI.config vendor/zeus_GKI.config vendor/debugfs.config"
       target_product: "zeus"
       legacy_lto_mode: "full"
+      trim_nonlisted_kmi: "0"
       use_zram: false
       use_bbg: false
       use_kpm: "disabled (关闭)"
