@@ -38,6 +38,26 @@ on:
         required: false
         type: string
         default: "Sun Dec 01 08:10:00 UTC 2024"
+      kernel_source_repo:
+        required: false
+        type: string
+        default: ""
+      kernel_source_commit:
+        required: false
+        type: string
+        default: ""
+      clang_prebuilt_commit:
+        required: false
+        type: string
+        default: ""
+      clang_prebuilt_version:
+        required: false
+        type: string
+        default: ""
+      legacy_lto_mode:
+        required: false
+        type: string
+        default: "thin"
 
       # ==================== 功能开关 ====================
       use_zram:
@@ -104,6 +124,10 @@ jobs:
           echo "补丁级别      : ${{ inputs.os_patch_level }}"
           echo "KSU 变体      : ${{ inputs.ksu_variant }}"
           echo "构建时间      : ${{ inputs.build_time }}"
+          echo "内核源码仓库  : ${{ inputs.kernel_source_repo || 'AOSP 默认' }}"
+          echo "内核源码提交  : ${{ inputs.kernel_source_commit || '分支默认' }}"
+          echo "Clang 版本    : ${{ inputs.clang_prebuilt_version || '内核清单默认' }}"
+          echo "Legacy LTO    : ${{ inputs.legacy_lto_mode }}"
           echo "SUSFS 状态    : ${{ inputs.enable_susfs }}"
           echo "ZRAM 增强     : ${{ inputs.use_zram }}"
           echo "BBG 补丁      : ${{ inputs.use_bbg }}"
@@ -319,6 +343,64 @@ jobs:
           $REPO --trace sync -c -j$(nproc --all) --no-tags --fail-fast
           echo "REMOTE_BRANCH=$REMOTE_BRANCH" >> $GITHUB_ENV
 
+      - name: 切换固定内核源码与编译器
+        if: inputs.kernel_source_repo != '' || inputs.kernel_source_commit != '' || inputs.clang_prebuilt_commit != '' || inputs.clang_prebuilt_version != ''
+        working-directory: ${{ env.KERNEL_ROOT }}
+        env:
+          SOURCE_REPO: ${{ inputs.kernel_source_repo }}
+          SOURCE_COMMIT: ${{ inputs.kernel_source_commit }}
+          CLANG_COMMIT: ${{ inputs.clang_prebuilt_commit }}
+          CLANG_VERSION: ${{ inputs.clang_prebuilt_version }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "$SOURCE_REPO" || ! "$SOURCE_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "::error title=固定源码参数无效::kernel_source_repo 与 40 位 kernel_source_commit 必须同时提供"
+            exit 1
+          fi
+
+          echo "获取固定内核源码: $SOURCE_REPO@$SOURCE_COMMIT"
+          git -C common fetch --no-tags --depth=1 "$SOURCE_REPO" "$SOURCE_COMMIT"
+          FETCHED_COMMIT=$(git -C common rev-parse FETCH_HEAD)
+          if [[ "$FETCHED_COMMIT" != "$SOURCE_COMMIT" ]]; then
+            echo "::error title=源码提交不匹配::期望 $SOURCE_COMMIT，实际 $FETCHED_COMMIT"
+            exit 1
+          fi
+          git -C common checkout --detach "$FETCHED_COMMIT"
+
+          if [[ -n "$CLANG_COMMIT" || -n "$CLANG_VERSION" ]]; then
+            if [[ ! "$CLANG_COMMIT" =~ ^[0-9a-fA-F]{40}$ || ! "$CLANG_VERSION" =~ ^clang-r[0-9]+[a-z]?$ ]]; then
+              echo "::error title=Clang 参数无效::必须同时提供 40 位提交与 clang-rXXXXXX 版本目录"
+              exit 1
+            fi
+
+            CLANG_ROOT="$PWD/prebuilts-lineage/clang/host/linux-x86"
+            mkdir -p "$CLANG_ROOT"
+            git -C "$CLANG_ROOT" init
+            git -C "$CLANG_ROOT" remote add origin \
+              https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86
+            git -C "$CLANG_ROOT" sparse-checkout init --cone
+            git -C "$CLANG_ROOT" sparse-checkout set "$CLANG_VERSION"
+            git -C "$CLANG_ROOT" fetch --filter=blob:none --no-tags --depth=1 origin "$CLANG_COMMIT"
+            FETCHED_CLANG_COMMIT=$(git -C "$CLANG_ROOT" rev-parse FETCH_HEAD)
+            if [[ "$FETCHED_CLANG_COMMIT" != "$CLANG_COMMIT" ]]; then
+              echo "::error title=Clang 提交不匹配::期望 $CLANG_COMMIT，实际 $FETCHED_CLANG_COMMIT"
+              exit 1
+            fi
+            git -C "$CLANG_ROOT" checkout --detach "$FETCHED_CLANG_COMMIT"
+
+            CLANG_BIN="prebuilts-lineage/clang/host/linux-x86/$CLANG_VERSION/bin"
+            if [[ ! -x "$CLANG_BIN/clang" ]]; then
+              echo "::error title=Clang 下载失败::未找到 $CLANG_BIN/clang"
+              exit 1
+            fi
+            sed -i "s|^CLANG_PREBUILT_BIN=.*|CLANG_PREBUILT_BIN=$CLANG_BIN|" common/build.config.common
+            echo "已锁定编译器: $($CLANG_BIN/clang --version | head -n 1)"
+          fi
+
+          echo "固定源码提交: $(git -C common rev-parse HEAD)"
+          echo "固定源码版本: $(awk '/^(VERSION|PATCHLEVEL|SUBLEVEL) =/ { printf \"%s%s\", sep, $3; sep=\".\" } END { print \"\" }' common/Makefile)"
+
       - name: 应用 Stock Config 伪装
         run: |
           STOCK_SRC="$GITHUB_WORKSPACE/config/stock_defconfig"
@@ -364,6 +446,10 @@ jobs:
           fi
           echo "ACTUAL_SUBLEVEL=$ACTUAL_SUBLEVEL" >> $GITHUB_ENV
           echo "实际子版本号: $ACTUAL_SUBLEVEL"
+          if [[ -n "${{ inputs.kernel_source_commit }}" && "$ACTUAL_SUBLEVEL" != "${{ inputs.sub_level }}" ]]; then
+            echo "::error title=内核子版本不匹配::工作流要求 ${{ inputs.sub_level }}，固定源码实际为 $ACTUAL_SUBLEVEL"
+            exit 1
+          fi
 
       # 以同步后的实际 SUBLEVEL 判断，避免对已包含上游修复的 LTS 重复打补丁
       - name: 自动应用 CVE-2026-43499 rtmutex 修复链
@@ -1127,7 +1213,7 @@ jobs:
               sed -i '/KMI_SYMBOL_LIST_STRICT_MODE/d' ./common/build.config.gki.aarch64
 
               if [ -f "build/build.sh" ]; then
-                LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh CC="/usr/bin/ccache clang" || exit 1
+                LTO="${{ inputs.legacy_lto_mode }}" BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh CC="/usr/bin/ccache clang" || exit 1
                 strings "out/${{ inputs.android_version }}-${{ inputs.kernel_version }}/dist/Image" | grep 'Linux version'
               else
                 # 提取 gki_defconfig 修改到 fragment，避免 bazel trim 检查失败

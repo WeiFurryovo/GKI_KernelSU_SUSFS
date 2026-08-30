@@ -1,4 +1,4 @@
-name: 构建 Droidspaces 内核 - Android 12 (5.10.246)
+name: 构建 Droidspaces 内核 - LineageOS 23.2 zeus (5.10.256)
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -36,18 +36,25 @@ on:
 
 jobs:
   build-kernel:
-    name: "5.10.246-Droidspaces-ReSukiSU"
+    name: "LineageOS-23.2-zeus-5.10.256-Droidspaces-ReSukiSU"
     uses: ./.github/workflows/build.yml
     secrets: inherit
     with:
+      # Android 16 userspace仍沿用 android12-5.10 KMI；这里表示内核世代，不是 ROM 版本。
       android_version: "android12"
       kernel_version: "5.10"
-      sub_level: "246"
+      sub_level: "256"
+      # 仅用于同步兼容的 AOSP 旧式构建工具，common 随后切到下方 LineageOS 固定提交。
       os_patch_level: "2025-12"
       revision: "r1"
       ksu_variant: "ReSukiSU"
       version: ""
-      build_time: "Sun Dec 01 08:10:00 UTC 2024"
+      build_time: "Tue Aug 25 06:00:41 UTC 2026"
+      kernel_source_repo: "https://github.com/LineageOS/android_kernel_xiaomi_sm8450.git"
+      kernel_source_commit: "e682ed2de56fd2841ef35741c4d0f03599ffd561"
+      clang_prebuilt_commit: "9916fb51ccb914d62d35ad9a7b9b21d2ef046928"
+      clang_prebuilt_version: "clang-r563880c"
+      legacy_lto_mode: "full"
       use_zram: false
       use_bbg: false
       use_kpm: "disabled (关闭)"
